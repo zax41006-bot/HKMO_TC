@@ -115,39 +115,34 @@ jobs:
                 else:
                     print(f'✅ [{tc_id}] 圖片發送成功！')
                     
-            # ==================== 步驟 B：精準識別經緯度並發送報文 ====================
+            # ==================== 步驟 B：識別實時定位，判斷是否在範圍內，並發送距離報文 ====================
             try:
                 resp_past = requests.get(f"{TC_TRACK_URL}/past_track_{tc_id}.csv?t={os.urandom(4).hex()}", timeout=10)
                 if resp_past.status_code == 200:
-                    # 🌟 改用 pandas 讀取，杜絕欄位順序錯誤
                     df = pd.read_csv(StringIO(resp_past.text))
-                    df.columns = df.columns.str.strip().str.lower() # 轉小寫並去空白
+                    df.columns = df.columns.str.strip().str.lower()
                     
                     current_lat, current_lng = None, None
                     
                     # 尋找 type 為 current 的行
                     curr_row = df[df['type'].astype(str).str.lower() == 'current']
                     if not curr_row.empty:
-                        # 透過欄位名稱抓取，不管它在第幾欄
                         current_lat = float(curr_row.iloc[0]['lat'])
                         current_lng = float(curr_row.iloc[0]['lng'])
                     else:
-                        # 如果沒有 current，退回抓最後一行
                         current_lat = float(df.iloc[-1]['lat'])
                         current_lng = float(df.iloc[-1]['lng'])
                     
                     if current_lat is not None and current_lng is not None:
-                        # 🌟 安全檢查：確保數值在合理範圍
-                        if not (-90 <= current_lat <= 90) or not (-180 <= current_lng <= 180):
-                            print(f"❌ [{tc_id}] 經緯度數值異常！(緯度: {current_lat}, 經度: {current_lng})")
-                        else:
-                            print(f"🔍 除錯資訊 -> 澳門: ({MACAU_COORDS[0]}, {MACAU_COORDS[1]})，颱風: ({current_lat}, {current_lng})")
+                        # 🌟 核心判斷：是否進入港澳警戒區 (105-135E, 10-30N)
+                        if (105.0 <= current_lng <= 135.0) and (10.0 <= current_lat <= 30.0):
+                            print(f"🌊 [{tc_id}] 氣旋已進入港澳關注範圍 ({current_lng}E, {current_lat}N)，開始計算距離...")
                             
-                            # 計算距離 (緯度, 經度)
+                            # 計算距離
                             dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
                             dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
                             
-                            # 四捨五入到最近的十位數 (0尾)
+                            # 四捨五入到十位數
                             round_macau = int(round(dist_macau / 10.0)) * 10
                             round_hk = int(round(dist_hk / 10.0)) * 10
                             
@@ -161,6 +156,8 @@ jobs:
                                 print(f'❌ [{tc_id}] 距離報文發送失敗: {resp_msg.text}')
                             else:
                                 print(f'✅ [{tc_id}] 距離報文發送成功！')
+                        else:
+                            print(f"💤 [{tc_id}] 氣旋位置 ({current_lng}E, {current_lat}N) 未進入 105-135E, 10-30N 範圍，跳過發送距離報文。")
                     else:
                         print(f"⚠️ [{tc_id}] 找不到有效的定位數據，跳過距離報文。")
             except Exception as e:
