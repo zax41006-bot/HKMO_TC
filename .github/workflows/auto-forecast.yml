@@ -2,7 +2,8 @@ name: Auto Forecast and Deploy
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    # 每 10 分鐘自動檢查一次更新
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -34,37 +35,43 @@ jobs:
     - name: Run plot script
       run: python plot_all_tc.py
 
+    # 🌟 合併提交：不僅提交圖片，還要提交防重複的狀態檔案
     - name: Commit and push updated plots
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add output/*.png
+        git add output/last_sent_hash.txt 2>/dev/null || true
         
         if ! git diff --cached --quiet; then
           git fetch origin main
           git reset --soft origin/main
           git add output/*.png
-          git commit -m "chore: auto-update all TC forecast plots [skip ci]"
+          git add output/last_sent_hash.txt 2>/dev/null || true
+          git commit -m "chore: auto-update TC plots and hash [skip ci]"
           git push
         else
-          echo "圖片無變化，不提交"
+          echo "無變化，不提交"
         fi
 
     - name: Send TC forecast to Telegram
       env:
         BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.TELEGRAM_TO }}
+        # 判斷是手動觸發還是定時觸發
+        EVENT_NAME: ${{ github.event_name }} 
       run: |
         cat << 'EOF' > send_tg.py
-        import requests, json, os, sys, math, pandas as pd
+        import requests, json, os, sys, math, pandas as pd, hashlib
         from io import StringIO
         
         token = os.environ.get('BOT_TOKEN')
         chat_id = os.environ.get('CHAT_ID')
+        is_manual = os.environ.get('EVENT_NAME') == 'workflow_dispatch'
         
         TC_TRACK_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main"
+        HASH_FILE = "output/last_sent_hash.txt"
         
-        # 座標：(緯度, 經度)
         MACAU_COORDS = (22.17, 113.55)
         HK_COORDS = (22.3193, 114.1694)
         
@@ -79,6 +86,42 @@ jobs:
         with open('tc_config.json', 'r', encoding='utf-8-sig') as f:
             tc_list = json.load(f)
             
+        # 🌟 去重邏輯：把所有數據抓下來算 Hash
+        combined_data_str = ""
+        data_cache = {}
+        
+        for tc in tc_list:
+            tc_id = tc['id']
+            try:
+                p_res = requests.get(f"{TC_TRACK_URL}/past_track_{tc_id}.csv", timeout=10)
+                f_res = requests.get(f"{TC_TRACK_URL}/forecast_track_{tc_id}.csv", timeout=10)
+                n_res = requests.get(f"{TC_TRACK_URL}/notice_{tc_id}.txt", timeout=10)
+                if n_res.status_code != 200:
+                    n_res = requests.get(f"{TC_TRACK_URL}/notice.txt", timeout=10)
+                
+                p_text = p_res.text if p_res.status_code == 200 else ""
+                f_text = f_res.text if f_res.status_code == 200 else ""
+                n_text = n_res.text if n_res.status_code == 200 else ""
+                
+                combined_data_str += p_text + f_text + n_text
+                data_cache[tc_id] = {'past': p_text, 'notice': n_text}
+            except Exception as e:
+                print(f"抓取 {tc_id} 數據失敗: {e}")
+                
+        current_hash = hashlib.md5(combined_data_str.encode('utf-8')).hexdigest()
+        old_hash = ""
+        if os.path.exists(HASH_FILE):
+            with open(HASH_FILE, 'r') as f:
+                old_hash = f.read().strip()
+                
+        # 如果不是手動觸發，且 Hash 完全一樣，直接罷工！
+        if not is_manual and current_hash == old_hash:
+            print("💤 數據無任何變化 (Hash 相同)，跳過發送。")
+            sys.exit(0)
+            
+        print(f"🔔 檢測到數據更新 (或是手動觸發)，開始發送...")
+        os.makedirs("output", exist_ok=True)
+        
         for tc in tc_list:
             tc_id = tc['id']
             tc_name = tc['name']
@@ -89,18 +132,7 @@ jobs:
                 continue
                 
             # ==================== 步驟 A：發送主預報圖 ====================
-            caption = ''
-            try:
-                resp_notice = requests.get(f"{TC_TRACK_URL}/notice_{tc_id}.txt?t={os.urandom(4).hex()}", timeout=10)
-                if resp_notice.status_code == 200:
-                    caption = resp_notice.text
-                else:
-                    resp_generic = requests.get(f"{TC_TRACK_URL}/notice.txt?t={os.urandom(4).hex()}", timeout=10)
-                    if resp_generic.status_code == 200:
-                        caption = resp_generic.text
-            except Exception as e:
-                print(f"⚠️ [{tc_id}] 無法讀取遠端公告: {e}")
-            
+            caption = data_cache.get(tc_id, {}).get('notice', '')
             if len(caption) > 1000:
                 caption = caption[:1000] + '\n...(截斷)'
                     
@@ -111,20 +143,17 @@ jobs:
                 
                 if resp.status_code != 200:
                     print(f'❌ [{tc_id}] 圖片發送失敗: {resp.text}')
-                    sys.exit(1)
+                    sys.exit(1) # 如果圖片發送失敗，直接中斷，不存 Hash
                 else:
                     print(f'✅ [{tc_id}] 圖片發送成功！')
                     
-            # ==================== 步驟 B：識別實時定位，判斷是否在範圍內，並發送距離報文 ====================
+            # ==================== 步驟 B：距離報文 ====================
             try:
-                resp_past = requests.get(f"{TC_TRACK_URL}/past_track_{tc_id}.csv?t={os.urandom(4).hex()}", timeout=10)
-                if resp_past.status_code == 200:
-                    df = pd.read_csv(StringIO(resp_past.text))
+                past_csv_text = data_cache.get(tc_id, {}).get('past', '')
+                if past_csv_text:
+                    df = pd.read_csv(StringIO(past_csv_text))
                     df.columns = df.columns.str.strip().str.lower()
                     
-                    current_lat, current_lng = None, None
-                    
-                    # 尋找 type 為 current 的行
                     curr_row = df[df['type'].astype(str).str.lower() == 'current']
                     if not curr_row.empty:
                         current_lat = float(curr_row.iloc[0]['lat'])
@@ -133,35 +162,31 @@ jobs:
                         current_lat = float(df.iloc[-1]['lat'])
                         current_lng = float(df.iloc[-1]['lng'])
                     
-                    if current_lat is not None and current_lng is not None:
-                        # 🌟 核心判斷：是否進入港澳警戒區 (105-135E, 10-30N)
-                        if (105.0 <= current_lng <= 135.0) and (10.0 <= current_lat <= 30.0):
-                            print(f"🌊 [{tc_id}] 氣旋已進入港澳關注範圍 ({current_lng}E, {current_lat}N)，開始計算距離...")
-                            
-                            # 計算距離
-                            dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
-                            dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
-                            
-                            # 四捨五入到十位數
-                            round_macau = int(round(dist_macau / 10.0)) * 10
-                            round_hk = int(round(dist_hk / 10.0)) * 10
-                            
-                            msg_text = f"熱帶氣旋「{tc_name}」距離香港：{round_hk}公里，距離澳門：{round_macau}公里"
-                            
-                            url_msg = f'https://api.telegram.org/bot{token}/sendMessage'
-                            print(f'📝 [{tc_id}] 正在發送距離報文: {msg_text}')
-                            resp_msg = requests.post(url_msg, json={'chat_id': chat_id, 'text': msg_text})
-                            
-                            if resp_msg.status_code != 200:
-                                print(f'❌ [{tc_id}] 距離報文發送失敗: {resp_msg.text}')
-                            else:
-                                print(f'✅ [{tc_id}] 距離報文發送成功！')
+                    if (105.0 <= current_lng <= 135.0) and (10.0 <= current_lat <= 30.0):
+                        print(f"🌊 [{tc_id}] 氣旋已進入港澳關注範圍，開始計算距離...")
+                        dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
+                        dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
+                        round_macau = int(round(dist_macau / 10.0)) * 10
+                        round_hk = int(round(dist_hk / 10.0)) * 10
+                        
+                        msg_text = f"熱帶氣旋「{tc_name}」距離香港：{round_hk}公里，距離澳門：{round_macau}公里"
+                        
+                        url_msg = f'https://api.telegram.org/bot{token}/sendMessage'
+                        print(f'📝 [{tc_id}] 正在發送距離報文: {msg_text}')
+                        resp_msg = requests.post(url_msg, json={'chat_id': chat_id, 'text': msg_text})
+                        
+                        if resp_msg.status_code != 200:
+                            print(f'❌ [{tc_id}] 距離報文發送失敗: {resp_msg.text}')
                         else:
-                            print(f"💤 [{tc_id}] 氣旋位置 ({current_lng}E, {current_lat}N) 未進入 105-135E, 10-30N 範圍，跳過發送距離報文。")
+                            print(f'✅ [{tc_id}] 距離報文發送成功！')
                     else:
-                        print(f"⚠️ [{tc_id}] 找不到有效的定位數據，跳過距離報文。")
+                        print(f"💤 [{tc_id}] 氣旋未進入 105-135E, 10-30N 範圍，跳過距離報文。")
             except Exception as e:
                 print(f"⚠️ [{tc_id}] 計算或發送距離報文失敗: {e}")
                 
+        # 🌟 發送完畢後，把最新的 Hash 存檔，供下次比對
+        with open(HASH_FILE, 'w') as f:
+            f.write(current_hash)
+        print("💾 已更新防重複 Hash 檔案。")
         EOF
         python send_tg.py
