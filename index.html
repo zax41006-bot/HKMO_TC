@@ -40,8 +40,20 @@
 
 <div id="app" v-cloak>
     
-    <!-- 居中標題 -->
-    <header class="flex flex-col items-center justify-center py-6 bg-white border-b-4 border-blue-700 shadow-sm mb-6">
+    <!-- 居中標題 (已加入右上角按鈕) -->
+    <header class="relative flex flex-col items-center justify-center py-6 pt-20 md:pt-6 bg-white border-b-4 border-blue-700 shadow-sm mb-6">
+        
+        <!-- 右上角導航按鈕區 -->
+        <div class="absolute top-3 right-3 md:top-4 md:right-4 flex gap-2">
+            <!-- 主頁網址改為 # -->
+            <a href="#" class="inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 bg-white border-2 border-blue-600 text-blue-700 font-bold rounded-full hover:bg-blue-50 transition-colors shadow-sm text-xs md:text-sm">
+                <i class="fa-solid fa-house"></i> 主頁
+            </a>
+            <a href="https://zax41006-bot.github.io/HKMO_MET-TC-GIS/" target="_blank" class="inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 bg-blue-600 border-2 border-blue-600 text-white font-bold rounded-full hover:bg-blue-700 transition-colors shadow-sm text-xs md:text-sm">
+                <i class="fa-solid fa-map"></i> GIS版
+            </a>
+        </div>
+
         <h1 class="text-3xl font-black text-black">港澳天氣站 HKMO_MET</h1>
         <h2 class="text-xl font-bold text-blue-700 mt-2">熱帶氣旋快訊與預報</h2>
         
@@ -162,12 +174,6 @@
                     </table>
                 </div>
             </div>
-        </div>
-
-        <div class="mt-10 mb-4 text-center">
-            <a href="index.html" class="inline-flex items-center gap-2 px-6 py-3 bg-white border-2 border-blue-600 text-blue-700 font-bold rounded-full hover:bg-blue-50 transition-colors shadow-sm">
-                <i class="fa-solid fa-house"></i> 回到主頁
-            </a>
         </div>
 
     </main>
