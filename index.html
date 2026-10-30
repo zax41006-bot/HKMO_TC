@@ -20,7 +20,7 @@
         .stat-label { font-size: 0.75rem; color: #6b7280; font-weight: 700; margin-bottom: 0.25rem; }
         .stat-value { font-size: 1.15rem; color: #1f2937; font-weight: 800; }
         
-        /* 強度標籤顏色（對齊 Python 繪圖色碼） */
+        /* 強度標籤顏色 */
         .intensity-pill { display: inline-flex; padding: 0.3rem 0.8rem; border-radius: 9999px; font-weight: 800; color: #ffffff; }
         .intensity-TD { background-color: #FAD02C; color: #1f2937; }
         .intensity-TS { background-color: #0072C6; }
@@ -101,13 +101,13 @@
                 </div>
             </div>
 
-            <!-- 熱帶氣旋預報資訊（MMC 風格公告卡片） -->
+            <!-- 熱帶氣旋預報資訊 -->
             <div v-if="noticeText" class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 md:p-6 mb-8">
                 <h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa-solid fa-bullhorn text-blue-600 mr-2"></i>熱帶氣旋預報資訊</h3>
                 <div class="text-gray-700 leading-loose whitespace-pre-wrap font-medium">{{ noticeText }}</div>
             </div>
 
-            <!-- 預報圖 -->
+            <!-- 主預報圖 -->
             <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 md:p-6 mb-8">
                 <h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa-solid fa-map-location-dot text-blue-600 mr-2"></i>路徑預報圖</h3>
                 <div class="relative w-full flex justify-center bg-gray-50 rounded-lg border border-gray-100 min-h-[300px]">
@@ -119,6 +119,21 @@
                     <div v-if="!imgLoaded && !imgError" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
                         <i class="fa fa-spinner fa-spin text-3xl mb-3"></i><p>圖片載入中...</p>
                     </div>
+                </div>
+            </div>
+
+            <!-- 港澳局部威脅圖 (新增) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8" v-if="showMacau || showHK">
+                <!-- 澳門圖 -->
+                <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4" v-show="showMacau">
+                    <h3 class="text-lg font-bold text-gray-800 mb-2"><i class="fa-solid fa-location-dot text-green-600 mr-2"></i>澳門威脅圖</h3>
+                    <img :src="macauImageSrc" class="w-full rounded" @load="macauLoaded = true" @error="macauLoaded = false" v-show="macauLoaded">
+                </div>
+                
+                <!-- 香港圖 -->
+                <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4" v-show="showHK">
+                    <h3 class="text-lg font-bold text-gray-800 mb-2"><i class="fa-solid fa-location-dot text-red-600 mr-2"></i>香港威脅圖</h3>
+                    <img :src="hkImageSrc" class="w-full rounded" @load="hkLoaded = true" @error="hkLoaded = false" v-show="hkLoaded">
                 </div>
             </div>
 
@@ -160,7 +175,6 @@
 
 <script>
     const { createApp } = Vue;
-    // 直接指定 TC-Track 的 raw 路徑
     const SITE_BASE_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main";
 
     createApp({
@@ -173,10 +187,15 @@
                 currentTcId: '',
                 currentData: {}, 
                 forecastData: [], 
-                noticeText: '', // 儲存公告文字
+                noticeText: '', 
                 plotImageSrc: '', 
                 imgLoaded: false, 
-                imgError: false
+                imgError: false,
+                // 局部圖狀態
+                macauImageSrc: '',
+                hkImageSrc: '',
+                macauLoaded: false,
+                hkLoaded: false
             };
         },
         
@@ -191,6 +210,8 @@
             targetHours() {
                 return this.currentTc.target_hours || [24, 48, 72, 96, 120];
             },
+            showMacau() { return this.macauLoaded; },
+            showHK() { return this.hkLoaded; },
             filteredForecastData() {
                 if (!this.forecastData || this.forecastData.length === 0) return [];
                 
@@ -255,7 +276,14 @@
                 this.loading = true; this.error = ''; this.imgLoaded = false; this.imgError = false;
                 this.noticeText = ''; 
                 
-                this.plotImageSrc = `./output/forecast_${this.currentTcId}.png?t=${new Date().getTime()}`;
+                // 重置局部圖
+                this.macauLoaded = false;
+                this.hkLoaded = false;
+                
+                const timestamp = new Date().getTime();
+                this.plotImageSrc = `./output/forecast_${this.currentTcId}.png?t=${timestamp}`;
+                this.macauImageSrc = `./output/forecast_${this.currentTcId}_澳門.png?t=${timestamp}`;
+                this.hkImageSrc = `./output/forecast_${this.currentTcId}_香港.png?t=${timestamp}`;
                 
                 try {
                     // 1. 過去路徑數據
