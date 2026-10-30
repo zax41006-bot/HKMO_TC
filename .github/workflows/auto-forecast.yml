@@ -1,14 +1,12 @@
 name: Auto Forecast and Deploy
 
 on:
-  # 每 3 小時自動醒來一次 (UTC 0, 3, 6, 9...)
   schedule:
     - cron: '0 */3 * * *'
-  # 允許你手動點擊測試
   workflow_dispatch:
 
 permissions:
-  contents: write # 允許自動上傳圖片更新網頁
+  contents: write
 
 jobs:
   build-and-plot:
@@ -33,11 +31,9 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y fonts-wqy-microhei
 
-    # 1. 執行畫圖 (包含主圖與局部圖)
     - name: Run plot script
       run: python plot_all_tc.py
 
-    # 2. 自動把新圖上傳回 HKMO_TC，讓網站自動更新
     - name: Commit and push updated plots
       run: |
         git config user.name "github-actions[bot]"
@@ -54,22 +50,20 @@ jobs:
           echo "圖片無變化，不提交"
         fi
 
-    # 3. 發送到 Telegram (精準識別 current 實時定位)
     - name: Send TC forecast to Telegram
       env:
         BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.TELEGRAM_TO }}
       run: |
         cat << 'EOF' > send_tg.py
-        import requests, json, os, sys, math, re
+        import requests, json, os, sys, math
         
         token = os.environ.get('BOT_TOKEN')
         chat_id = os.environ.get('CHAT_ID')
         
-        # TC-Track 遠端路徑
         TC_TRACK_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main"
         
-        # 座標設定
+        # 嚴格定義：(緯度, 經度)
         MACAU_COORDS = (22.17, 113.55)
         HK_COORDS = (22.3193, 114.1694)
         
@@ -121,43 +115,49 @@ jobs:
                 else:
                     print(f'✅ [{tc_id}] 圖片發送成功！')
                     
-            # ==================== 步驟 B：精準識別實時定位並發送報文 ====================
+            # ==================== 步驟 B：精準計算距離並發送 ====================
             try:
                 resp_past = requests.get(f"{TC_TRACK_URL}/past_track_{tc_id}.csv?t={os.urandom(4).hex()}", timeout=10)
                 if resp_past.status_code == 200:
-                    # 清理 CSV 文本
                     raw_text = resp_past.text.replace('\r', '').strip()
-                    # 匹配帶有 current 標籤的行
-                    # 格式：時間, lng, lat, intensity, wind, pressure, type
                     current_lat, current_lng = None, None
                     
                     for line in raw_text.split('\n'):
                         if 'current' in line.lower():
                             parts = [p.strip() for p in line.split(',')]
+                            # 這裡強制依照你的 CSV 格式：第 2 欄是經度(lng)，第 3 欄是緯度(lat)
                             if len(parts) >= 3:
-                                current_lng = float(parts[1])
-                                current_lat = float(parts[2])
+                                try:
+                                    current_lng = float(parts[1])
+                                    current_lat = float(parts[2])
+                                except ValueError:
+                                    continue
                                 break
                     
                     if current_lat is not None and current_lng is not None:
-                        # 計算距離
-                        dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
-                        dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
-                        
-                        # 四捨五入到最近的十位數 (0尾)
-                        round_macau = int(round(dist_macau / 10.0)) * 10
-                        round_hk = int(round(dist_hk / 10.0)) * 10
-                        
-                        msg_text = f"熱帶氣旋「{tc_name}」距離香港：{round_hk}公里，距離澳門：{round_macau}公里"
-                        
-                        url_msg = f'https://api.telegram.org/bot{token}/sendMessage'
-                        print(f'📝 [{tc_id}] 正在發送距離報文: {msg_text}')
-                        resp_msg = requests.post(url_msg, json={'chat_id': chat_id, 'text': msg_text})
-                        
-                        if resp_msg.status_code != 200:
-                            print(f'❌ [{tc_id}] 距離報文發送失敗: {resp_msg.text}')
+                        # 🌟 安全檢查：確保緯度在 -90~90 之間，經度在 -180~180 之間
+                        if not (-90 <= current_lat <= 90) or not (-180 <= current_lng <= 180):
+                            print(f"❌ [{tc_id}] 經緯度數值異常！(經度: {current_lng}, 緯度: {current_lat})，取消發送距離。")
                         else:
-                            print(f'✅ [{tc_id}] 距離報文發送成功！')
+                            print(f"🔍 除錯資訊 -> 澳門: ({MACAU_COORDS[0]}, {MACAU_COORDS[1]})，颱風: ({current_lat}, {current_lng})")
+                            
+                            # 計算距離 (傳入順序：緯度, 經度, 緯度, 經度)
+                            dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
+                            dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
+                            
+                            round_macau = int(round(dist_macau / 10.0)) * 10
+                            round_hk = int(round(dist_hk / 10.0)) * 10
+                            
+                            msg_text = f"熱帶氣旋「{tc_name}」距離香港：{round_hk}公里，距離澳門：{round_macau}公里"
+                            
+                            url_msg = f'https://api.telegram.org/bot{token}/sendMessage'
+                            print(f'📝 [{tc_id}] 正在發送距離報文: {msg_text}')
+                            resp_msg = requests.post(url_msg, json={'chat_id': chat_id, 'text': msg_text})
+                            
+                            if resp_msg.status_code != 200:
+                                print(f'❌ [{tc_id}] 距離報文發送失敗: {resp_msg.text}')
+                            else:
+                                print(f'✅ [{tc_id}] 距離報文發送成功！')
                     else:
                         print(f"⚠️ [{tc_id}] 在 CSV 中找不到 current 實時定位，跳過距離報文。")
             except Exception as e:
