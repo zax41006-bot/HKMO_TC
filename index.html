@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>熱帶氣旋快訊與預報 | 港澳天氣站 HKMO_MET</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+
+    <style>
+        [v-cloak] { display: none; }
+        body { background-color: #f3f4f6; font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
+        
+        .bulletin-hero { background: linear-gradient(135deg, #1565C0 0%, #0d47a1 100%); border-radius: 16px; padding: 1.5rem 2rem; color: #ffffff; box-shadow: 0 8px 20px rgba(21, 101, 192, 0.25); }
+        .stat-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.1rem 1.25rem; transition: all 0.2s; }
+        .stat-card:hover { border-color: #1565C0; box-shadow: 0 4px 12px rgba(21, 101, 192, 0.12); transform: translateY(-2px); }
+        .stat-icon { width: 2.25rem; height: 2.25rem; border-radius: 8px; background: #E3F2FD; color: #1565C0; display: flex; align-items: center; justify-content: center; margin-bottom: 0.6rem; }
+        .stat-label { font-size: 0.75rem; color: #6b7280; font-weight: 700; margin-bottom: 0.25rem; }
+        .stat-value { font-size: 1.15rem; color: #1f2937; font-weight: 800; }
+        
+        /* 強度標籤顏色（對齊 Python 繪圖色碼） */
+        .intensity-pill { display: inline-flex; padding: 0.3rem 0.8rem; border-radius: 9999px; font-weight: 800; color: #ffffff; }
+        .intensity-TD { background-color: #FAD02C; color: #1f2937; }
+        .intensity-TS { background-color: #0072C6; }
+        .intensity-STS { background-color: #00A651; }
+        .intensity-TY { background-color: #FF9900; }
+        .intensity-STY { background-color: #E60012; }
+        .intensity-SUTY { background-color: #7B1FA2; }
+        .intensity-LPA { background-color: #A0A0A0; }
+        .intensity-MD { background-color: #A0A0A0; }
+        .intensity-EX { background-color: #8D8D8D; color: #ffffff; }
+        
+        .action-pill { display: inline-flex; align-items: center; padding: 0.65rem 1.4rem; border-radius: 9999px; font-weight: 700; border: none; background-color: #1565C0; color: #ffffff; cursor: pointer; }
+        .tc-select { border: 2px solid #1565C0; padding: 0.4rem 1rem; border-radius: 8px; font-weight: bold; outline: none; cursor: pointer; }
+    </style>
+</head>
+<body class="min-h-screen pb-20">
+
+<div id="app" v-cloak>
+    
+    <!-- 居中標題 -->
+    <header class="flex flex-col items-center justify-center py-6 bg-white border-b-4 border-blue-700 shadow-sm mb-6">
+        <h1 class="text-3xl font-black text-black">港澳天氣站 HKMO_MET</h1>
+        <h2 class="text-xl font-bold text-blue-700 mt-2">熱帶氣旋快訊與預報</h2>
+        
+        <div class="mt-4 flex items-center gap-2" v-if="tcList.length > 0">
+            <span class="font-bold text-gray-700">選擇氣旋：</span>
+            <select v-model="currentTcId" @change="loadData" class="tc-select">
+                <option v-for="tc in tcList" :key="tc.id" :value="tc.id">{{ tc.name }}</option>
+            </select>
+        </div>
+        <div class="text-sm font-bold text-gray-500 mt-2">{{ currentTime }}</div>
+    </header>
+
+    <main class="max-w-5xl mx-auto p-4">
+        
+        <div v-if="loading" class="text-center py-20 text-blue-600">
+            <i class="fa fa-spinner fa-spin text-3xl mb-3"></i>
+            <p class="font-bold">正在讀取氣旋數據與預報圖...</p>
+        </div>
+        
+        <div v-else-if="error" class="bg-white border-2 border-red-500 p-6 text-center rounded-xl shadow-md">
+            <i class="fa-solid fa-triangle-exclamation text-3xl text-red-500 mb-3"></i>
+            <p class="text-gray-700 font-bold">{{ error }}</p>
+            <button class="action-pill mt-4" @click="loadData"><i class="fa fa-rotate-right mr-1"></i>重新載入</button>
+        </div>
+
+        <div v-else>
+            <!-- Hero 卡片 -->
+            <div class="bulletin-hero mb-6">
+                <div class="text-sm opacity-85">當前熱帶氣旋</div>
+                <div class="text-4xl font-black">{{ currentTcName }}</div>
+                <div class="mt-2 text-sm"><i class="fa-regular fa-clock mr-1"></i>{{ formatDateTime(currentData.datetime) }} 更新</div>
+            </div>
+
+            <!-- 數據卡片 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-location-dot"></i></div>
+                    <div class="stat-label">中心位置</div>
+                    <div class="stat-value">北緯 {{ currentData.lat }} 度<br>東經 {{ currentData.lng }} 度</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-wind"></i></div>
+                    <div class="stat-label">最大風力</div>
+                    <div class="stat-value">{{ currentData.wind }} km/h</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-gauge-high"></i></div>
+                    <div class="stat-label">中心氣壓</div>
+                    <div class="stat-value">{{ currentData.minimum_central_pressure }} hPa</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                    <div class="stat-label">強度等級</div>
+                    <div class="stat-value">
+                        <span class="intensity-pill" :class="'intensity-' + currentData.intensity">{{ intensityName(currentData.intensity) }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 熱帶氣旋預報資訊（MMC 風格公告卡片） -->
+            <div v-if="noticeText" class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 md:p-6 mb-8">
+                <h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa-solid fa-bullhorn text-blue-600 mr-2"></i>熱帶氣旋預報資訊</h3>
+                <div class="text-gray-700 leading-loose whitespace-pre-wrap font-medium">{{ noticeText }}</div>
+            </div>
+
+            <!-- 預報圖 -->
+            <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 md:p-6 mb-8">
+                <h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa-solid fa-map-location-dot text-blue-600 mr-2"></i>路徑預報圖</h3>
+                <div class="relative w-full flex justify-center bg-gray-50 rounded-lg border border-gray-100 min-h-[300px]">
+                    <img :src="plotImageSrc" class="max-w-full h-auto rounded" @load="imgLoaded = true" @error="imgError = true" v-show="!imgError && imgLoaded">
+                    <div v-if="imgError" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                        <i class="fa-solid fa-image-slash text-5xl mb-3"></i><p class="font-bold">預報圖尚未生成</p>
+                        <p class="text-sm mt-1">請等待自動化任務完成</p>
+                    </div>
+                    <div v-if="!imgLoaded && !imgError" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                        <i class="fa fa-spinner fa-spin text-3xl mb-3"></i><p>圖片載入中...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 預報表格 -->
+            <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 md:p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa-solid fa-table-list text-blue-600 mr-2"></i>預報詳細資訊</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-center border-collapse">
+                        <thead>
+                            <tr class="bg-gray-100 text-gray-700">
+                                <th class="p-3 border-b-2">預報時間</th><th class="p-3 border-b-2">經緯度</th><th class="p-3 border-b-2">強度</th><th class="p-3 border-b-2">風速</th><th class="p-3 border-b-2">氣壓</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(f, index) in filteredForecastData" :key="index" class="hover:bg-blue-50 transition-colors">
+                                <td class="p-3 border-b font-bold">{{ f.displayTime }}</td>
+                                <td class="p-3 border-b text-sm">北緯 {{ f.lat }} 度，東經 {{ f.lng }} 度</td>
+                                <td class="p-3 border-b"><span class="intensity-pill text-xs" :class="'intensity-' + f.intensity">{{ intensityName(f.intensity) }}</span></td>
+                                <td class="p-3 border-b">{{ f.wind }} km/h</td>
+                                <td class="p-3 border-b">{{ f.minimum_central_pressure }} hPa</td>
+                            </tr>
+                            <tr v-if="filteredForecastData.length === 0">
+                                <td colspan="5" class="p-6 text-gray-500 font-bold">目前沒有預報數據</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-10 mb-4 text-center">
+            <a href="index.html" class="inline-flex items-center gap-2 px-6 py-3 bg-white border-2 border-blue-600 text-blue-700 font-bold rounded-full hover:bg-blue-50 transition-colors shadow-sm">
+                <i class="fa-solid fa-house"></i> 回到主頁
+            </a>
+        </div>
+
+    </main>
+</div>
+
+<script>
+    const { createApp } = Vue;
+    // 直接指定 TC-Track 的 raw 路徑
+    const SITE_BASE_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main";
+
+    createApp({
+        data() {
+            return {
+                loading: true, 
+                error: '', 
+                currentTime: '',
+                tcList: [], 
+                currentTcId: '',
+                currentData: {}, 
+                forecastData: [], 
+                noticeText: '', // 儲存公告文字
+                plotImageSrc: '', 
+                imgLoaded: false, 
+                imgError: false
+            };
+        },
+        
+        computed: {
+            currentTcName() {
+                const tc = this.tcList.find(t => t.id === this.currentTcId);
+                return tc ? tc.name : '';
+            },
+            currentTc() {
+                return this.tcList.find(t => t.id === this.currentTcId) || {};
+            },
+            targetHours() {
+                return this.currentTc.target_hours || [24, 48, 72, 96, 120];
+            },
+            filteredForecastData() {
+                if (!this.forecastData || this.forecastData.length === 0) return [];
+                
+                const allowedHours = this.targetHours;
+                
+                let baseDate = new Date();
+                if (this.currentData.datetime) {
+                    const m = this.currentData.datetime.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+                    if (m) {
+                        baseDate = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]), parseInt(m[4]), parseInt(m[5]));
+                    }
+                }
+                
+                return this.forecastData
+                    .filter(f => {
+                        const h = parseInt(f.f_time.replace('hr', ''));
+                        return allowedHours.includes(h);
+                    })
+                    .map(f => {
+                        const h = parseInt(f.f_time.replace('hr', ''));
+                        const fDate = new Date(baseDate.getTime() + h * 60 * 60 * 1000);
+                        const fMonth = fDate.getMonth() + 1;
+                        const fDay = fDate.getDate();
+                        const fHour = String(fDate.getHours()).padStart(2, '0');
+                        
+                        return {
+                            ...f,
+                            displayTime: `${fMonth}月${fDay}日 ${fHour}時`
+                        };
+                    })
+                    .sort((a, b) => parseInt(a.f_time.replace('hr', '')) - parseInt(b.f_time.replace('hr', '')));
+            }
+        },
+        
+        mounted() {
+            this.updateTime(); 
+            setInterval(this.updateTime, 1000);
+            this.initApp();
+        },
+        
+        methods: {
+            async initApp() {
+                try {
+                    const res = await fetch('./tc_config.json');
+                    this.tcList = await res.json();
+                    if (this.tcList.length > 0) {
+                        this.currentTcId = this.tcList[0].id;
+                        this.loadData();
+                    }
+                } catch (e) {
+                    this.error = '無法載入氣旋清單';
+                    this.loading = false;
+                }
+            },
+            
+            updateTime() {
+                const now = new Date();
+                this.currentTime = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+            },
+            
+            async loadData() {
+                this.loading = true; this.error = ''; this.imgLoaded = false; this.imgError = false;
+                this.noticeText = ''; 
+                
+                this.plotImageSrc = `./output/forecast_${this.currentTcId}.png?t=${new Date().getTime()}`;
+                
+                try {
+                    // 1. 過去路徑數據
+                    const pastUrl = `${SITE_BASE_URL}/past_track_${this.currentTcId}.csv`;
+                    const pastRes = await fetch(pastUrl, { cache: 'no-store' });
+                    if (!pastRes.ok) throw new Error(`讀取當前數據失敗 (HTTP ${pastRes.status})`);
+                    
+                    const pastRaw = (await pastRes.text()).replace(/^\uFEFF/, '');
+                    const normalized = pastRaw.replace(/\r\n/g, '\n').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+                    const recordRegex = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([A-Z]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\w+)/g;
+                    const rows = []; let match;
+                    while ((match = recordRegex.exec(normalized)) !== null) {
+                        rows.push({ datetime: match[1], lat: match[2], lng: match[3], intensity: match[4], wind: match[5], minimum_central_pressure: match[6], type: match[7] });
+                    }
+                    if (!rows.length) throw new Error('無法解析當前數據');
+                    this.currentData = rows.find(r => r.type === 'current') || rows[rows.length - 1];
+
+                    // 2. 預報數據
+                    const fcUrl = `${SITE_BASE_URL}/forecast_track_${this.currentTcId}.csv`;
+                    const fcRes = await fetch(fcUrl, { cache: 'no-store' });
+                    
+                    if (fcRes.ok) {
+                        const lines = (await fcRes.text()).replace(/^\uFEFF/, '').trim().split('\n');
+                        const fcData = [];
+                        for (let i = 1; i < lines.length; i++) {
+                            const p = lines[i].trim().split(',');
+                            if (p.length >= 6) fcData.push({ f_time: p[0], lat: p[1], lng: p[2], intensity: p[3], wind: p[4], minimum_central_pressure: p[5] });
+                        }
+                        this.forecastData = fcData;
+                    } else {
+                        this.forecastData = [];
+                    }
+
+                    // 3. 公告 notice_ID.txt
+                    try {
+                        const noticeUrl = `${SITE_BASE_URL}/notice_${this.currentTcId}.txt`;
+                        const noticeRes = await fetch(noticeUrl, { cache: 'no-store' });
+                        if (noticeRes.ok) {
+                            this.noticeText = await noticeRes.text();
+                        }
+                    } catch (noticeErr) {
+                        console.log('無公告或讀取失敗', noticeErr);
+                    }
+
+                } catch (e) {
+                    this.error = e.message || '無法載入數據';
+                } finally {
+                    this.loading = false;
+                }
+            },
+            
+            intensityName(code) {
+                return { 'TD':'熱帶低氣壓', 'TS':'熱帶風暴', 'STS':'強烈熱帶風暴', 'TY':'颱風', 'STY':'強颱風', 'SUTY':'超強颱風', 'EX':'溫帶氣旋', 'LPA':'低壓區', 'MD':'低壓區' }[code] || code;
+            },
+            
+            formatDateTime(dt) {
+                if (!dt) return '—';
+                const m = dt.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+                return m ? `${m[3]}年${m[2]}月${m[1]}日 ${m[4]}:${m[5]}` : dt;
+            }
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
