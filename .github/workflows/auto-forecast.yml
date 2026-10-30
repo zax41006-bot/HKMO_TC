@@ -56,18 +56,18 @@ jobs:
         CHAT_ID: ${{ secrets.TELEGRAM_TO }}
       run: |
         cat << 'EOF' > send_tg.py
-        import requests, json, os, sys, math
+        import requests, json, os, sys, math, pandas as pd
+        from io import StringIO
         
         token = os.environ.get('BOT_TOKEN')
         chat_id = os.environ.get('CHAT_ID')
         
         TC_TRACK_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main"
         
-        # 嚴格定義：(緯度, 經度)
+        # 座標：(緯度, 經度)
         MACAU_COORDS = (22.17, 113.55)
         HK_COORDS = (22.3193, 114.1694)
         
-        # Haversine 公式計算距離 (公里)
         def haversine(lat1, lon1, lat2, lon2):
             R = 6371.0
             dlat = math.radians(lat2 - lat1)
@@ -115,36 +115,39 @@ jobs:
                 else:
                     print(f'✅ [{tc_id}] 圖片發送成功！')
                     
-            # ==================== 步驟 B：精準計算距離並發送 ====================
+            # ==================== 步驟 B：精準識別經緯度並發送報文 ====================
             try:
                 resp_past = requests.get(f"{TC_TRACK_URL}/past_track_{tc_id}.csv?t={os.urandom(4).hex()}", timeout=10)
                 if resp_past.status_code == 200:
-                    raw_text = resp_past.text.replace('\r', '').strip()
+                    # 🌟 改用 pandas 讀取，杜絕欄位順序錯誤
+                    df = pd.read_csv(StringIO(resp_past.text))
+                    df.columns = df.columns.str.strip().str.lower() # 轉小寫並去空白
+                    
                     current_lat, current_lng = None, None
                     
-                    for line in raw_text.split('\n'):
-                        if 'current' in line.lower():
-                            parts = [p.strip() for p in line.split(',')]
-                            # 這裡強制依照你的 CSV 格式：第 2 欄是經度(lng)，第 3 欄是緯度(lat)
-                            if len(parts) >= 3:
-                                try:
-                                    current_lng = float(parts[1])
-                                    current_lat = float(parts[2])
-                                except ValueError:
-                                    continue
-                                break
+                    # 尋找 type 為 current 的行
+                    curr_row = df[df['type'].astype(str).str.lower() == 'current']
+                    if not curr_row.empty:
+                        # 透過欄位名稱抓取，不管它在第幾欄
+                        current_lat = float(curr_row.iloc[0]['lat'])
+                        current_lng = float(curr_row.iloc[0]['lng'])
+                    else:
+                        # 如果沒有 current，退回抓最後一行
+                        current_lat = float(df.iloc[-1]['lat'])
+                        current_lng = float(df.iloc[-1]['lng'])
                     
                     if current_lat is not None and current_lng is not None:
-                        # 🌟 安全檢查：確保緯度在 -90~90 之間，經度在 -180~180 之間
+                        # 🌟 安全檢查：確保數值在合理範圍
                         if not (-90 <= current_lat <= 90) or not (-180 <= current_lng <= 180):
-                            print(f"❌ [{tc_id}] 經緯度數值異常！(經度: {current_lng}, 緯度: {current_lat})，取消發送距離。")
+                            print(f"❌ [{tc_id}] 經緯度數值異常！(緯度: {current_lat}, 經度: {current_lng})")
                         else:
                             print(f"🔍 除錯資訊 -> 澳門: ({MACAU_COORDS[0]}, {MACAU_COORDS[1]})，颱風: ({current_lat}, {current_lng})")
                             
-                            # 計算距離 (傳入順序：緯度, 經度, 緯度, 經度)
+                            # 計算距離 (緯度, 經度)
                             dist_macau = haversine(MACAU_COORDS[0], MACAU_COORDS[1], current_lat, current_lng)
                             dist_hk = haversine(HK_COORDS[0], HK_COORDS[1], current_lat, current_lng)
                             
+                            # 四捨五入到最近的十位數 (0尾)
                             round_macau = int(round(dist_macau / 10.0)) * 10
                             round_hk = int(round(dist_hk / 10.0)) * 10
                             
@@ -159,7 +162,7 @@ jobs:
                             else:
                                 print(f'✅ [{tc_id}] 距離報文發送成功！')
                     else:
-                        print(f"⚠️ [{tc_id}] 在 CSV 中找不到 current 實時定位，跳過距離報文。")
+                        print(f"⚠️ [{tc_id}] 找不到有效的定位數據，跳過距離報文。")
             except Exception as e:
                 print(f"⚠️ [{tc_id}] 計算或發送距離報文失敗: {e}")
                 
