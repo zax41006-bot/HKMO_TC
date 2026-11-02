@@ -180,9 +180,8 @@
 
 <script>
     const { createApp } = Vue;
-    // 數據來源 (TC-Track)
+    // 🌟 所有資料與圖片都來自 TC-Track
     const SITE_BASE_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main";
-    // 圖片來源 (TC-Track 的 output 資料夾)
     const TC_RAW_OUTPUT = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main/output";
 
     createApp({
@@ -263,15 +262,18 @@
         methods: {
             async initApp() {
                 try {
-                    // 注意：這裡讀取的是 HKMO_TC 本地的 tc_config.json
-                    const res = await fetch('./tc_config.json');
+                    // 🌟 關鍵修改：去 TC-Track 讀取 JSON，加上時間戳避免瀏覽器快取
+                    const res = await fetch(`${SITE_BASE_URL}/tc_config.json?t=${new Date().getTime()}`);
+                    if (!res.ok) throw new Error('無法讀取氣旋清單');
+                    
                     this.tcList = await res.json();
+                    
                     if (this.tcList.length > 0) {
                         this.currentTcId = this.tcList[0].id;
                         this.loadData();
                     }
                 } catch (e) {
-                    this.error = '無法載入氣旋清單';
+                    this.error = '無法載入氣旋清單，請確認 TC-Track 中的 tc_config.json 是否存在';
                     this.loading = false;
                 }
             },
@@ -289,14 +291,14 @@
                 this.macauLoaded = false;
                 this.hkLoaded = false;
                 
-                // 🌟 關鍵修改：圖片路徑指向 TC-Track 的遠端路徑
+                // 圖片路徑指向 TC-Track 的遠端路徑
                 const timestamp = new Date().getTime();
                 this.plotImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}.png?t=${timestamp}`;
                 this.macauImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}_澳門.png?t=${timestamp}`;
                 this.hkImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}_香港.png?t=${timestamp}`;
                 
                 try {
-                    // 1. 過去路徑數據 (從 TC-Track 讀取)
+                    // 1. 過去路徑數據
                     const pastUrl = `${SITE_BASE_URL}/past_track_${this.currentTcId}.csv`;
                     const pastRes = await fetch(pastUrl, { cache: 'no-store' });
                     if (!pastRes.ok) throw new Error(`讀取當前數據失敗 (HTTP ${pastRes.status})`);
@@ -311,7 +313,7 @@
                     if (!rows.length) throw new Error('無法解析當前數據');
                     this.currentData = rows.find(r => r.type === 'current') || rows[rows.length - 1];
 
-                    // 2. 預報數據 (從 TC-Track 讀取)
+                    // 2. 預報數據
                     const fcUrl = `${SITE_BASE_URL}/forecast_track_${this.currentTcId}.csv`;
                     const fcRes = await fetch(fcUrl, { cache: 'no-store' });
                     
@@ -327,7 +329,7 @@
                         this.forecastData = [];
                     }
 
-                    // 3. 公告 notice_ID.txt (從 TC-Track 讀取)
+                    // 3. 公告
                     try {
                         const noticeUrl = `${SITE_BASE_URL}/notice_${this.currentTcId}.txt`;
                         const noticeRes = await fetch(noticeUrl, { cache: 'no-store' });
