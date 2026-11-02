@@ -40,12 +40,11 @@
 
 <div id="app" v-cloak>
     
-    <!-- 居中標題 (已加入右上角按鈕) -->
+    <!-- 居中標題 (右上角按鈕) -->
     <header class="relative flex flex-col items-center justify-center py-6 pt-20 md:pt-6 bg-white border-b-4 border-blue-700 shadow-sm mb-6">
         
         <!-- 右上角導航按鈕區 -->
         <div class="absolute top-3 right-3 md:top-4 md:right-4 flex gap-2">
-            <!-- 主頁網址改為 # -->
             <a href="#" class="inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 bg-white border-2 border-blue-600 text-blue-700 font-bold rounded-full hover:bg-blue-50 transition-colors shadow-sm text-xs md:text-sm">
                 <i class="fa-solid fa-house"></i> 主頁
             </a>
@@ -134,7 +133,7 @@
                 </div>
             </div>
 
-            <!-- 港澳局部威脅圖 (新增) -->
+            <!-- 港澳局部威脅圖 -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8" v-if="showMacau || showHK">
                 <!-- 澳門圖 -->
                 <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4" v-show="showMacau">
@@ -181,7 +180,10 @@
 
 <script>
     const { createApp } = Vue;
+    // 數據來源 (TC-Track)
     const SITE_BASE_URL = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main";
+    // 圖片來源 (TC-Track 的 output 資料夾)
+    const TC_RAW_OUTPUT = "https://raw.githubusercontent.com/zax41006-bot/TC-Track/main/output";
 
     createApp({
         data() {
@@ -261,6 +263,7 @@
         methods: {
             async initApp() {
                 try {
+                    // 注意：這裡讀取的是 HKMO_TC 本地的 tc_config.json
                     const res = await fetch('./tc_config.json');
                     this.tcList = await res.json();
                     if (this.tcList.length > 0) {
@@ -286,13 +289,14 @@
                 this.macauLoaded = false;
                 this.hkLoaded = false;
                 
+                // 🌟 關鍵修改：圖片路徑指向 TC-Track 的遠端路徑
                 const timestamp = new Date().getTime();
-                this.plotImageSrc = `./output/forecast_${this.currentTcId}.png?t=${timestamp}`;
-                this.macauImageSrc = `./output/forecast_${this.currentTcId}_澳門.png?t=${timestamp}`;
-                this.hkImageSrc = `./output/forecast_${this.currentTcId}_香港.png?t=${timestamp}`;
+                this.plotImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}.png?t=${timestamp}`;
+                this.macauImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}_澳門.png?t=${timestamp}`;
+                this.hkImageSrc = `${TC_RAW_OUTPUT}/forecast_${this.currentTcId}_香港.png?t=${timestamp}`;
                 
                 try {
-                    // 1. 過去路徑數據
+                    // 1. 過去路徑數據 (從 TC-Track 讀取)
                     const pastUrl = `${SITE_BASE_URL}/past_track_${this.currentTcId}.csv`;
                     const pastRes = await fetch(pastUrl, { cache: 'no-store' });
                     if (!pastRes.ok) throw new Error(`讀取當前數據失敗 (HTTP ${pastRes.status})`);
@@ -307,7 +311,7 @@
                     if (!rows.length) throw new Error('無法解析當前數據');
                     this.currentData = rows.find(r => r.type === 'current') || rows[rows.length - 1];
 
-                    // 2. 預報數據
+                    // 2. 預報數據 (從 TC-Track 讀取)
                     const fcUrl = `${SITE_BASE_URL}/forecast_track_${this.currentTcId}.csv`;
                     const fcRes = await fetch(fcUrl, { cache: 'no-store' });
                     
@@ -323,7 +327,7 @@
                         this.forecastData = [];
                     }
 
-                    // 3. 公告 notice_ID.txt
+                    // 3. 公告 notice_ID.txt (從 TC-Track 讀取)
                     try {
                         const noticeUrl = `${SITE_BASE_URL}/notice_${this.currentTcId}.txt`;
                         const noticeRes = await fetch(noticeUrl, { cache: 'no-store' });
